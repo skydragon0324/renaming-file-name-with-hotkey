@@ -13,15 +13,19 @@ namespace SpecialRename
 {
     public sealed class HotkeyForm : Form
     {
-        private const int HotkeyId = 9001;
+        private const int HotkeyIdFirst = 9001;
+        private const int HotkeyIdSecond = 9002;
         private const int WmHotkey = 0x0312;
         private const uint ModControl = 0x0002;
         private const uint VkF1 = 0x70;
+        private const uint VkF2 = 0x71;
 
-        private readonly TextBox nameBox;
+        private readonly TextBox firstNameBox;
+        private readonly TextBox secondNameBox;
         private readonly Label statusLabel;
         private readonly NotifyIcon notifyIcon;
-        private string targetName = "target";
+        private string firstTargetName = "target";
+        private string secondTargetName = "target2";
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -38,28 +42,44 @@ namespace SpecialRename
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
-            ClientSize = new Size(420, 178);
+            ClientSize = new Size(420, 236);
 
-            var label = new Label
+            var firstLabel = new Label
             {
-                Text = "Target name",
+                Text = "First target name (Ctrl+F1)",
                 Location = new Point(18, 18),
                 Size = new Size(380, 22)
             };
-            Controls.Add(label);
+            Controls.Add(firstLabel);
 
-            nameBox = new TextBox
+            firstNameBox = new TextBox
             {
                 Location = new Point(18, 44),
                 Size = new Size(380, 24),
-                Text = targetName
+                Text = firstTargetName
             };
-            Controls.Add(nameBox);
+            Controls.Add(firstNameBox);
+
+            var secondLabel = new Label
+            {
+                Text = "Second target name (Ctrl+F2)",
+                Location = new Point(18, 80),
+                Size = new Size(380, 22)
+            };
+            Controls.Add(secondLabel);
+
+            secondNameBox = new TextBox
+            {
+                Location = new Point(18, 106),
+                Size = new Size(380, 24),
+                Text = secondTargetName
+            };
+            Controls.Add(secondNameBox);
 
             var saveButton = new Button
             {
                 Text = "Start hotkey",
-                Location = new Point(18, 82),
+                Location = new Point(18, 144),
                 Size = new Size(110, 30)
             };
             saveButton.Click += (sender, args) => StartHotkey();
@@ -68,7 +88,7 @@ namespace SpecialRename
             var hideButton = new Button
             {
                 Text = "Hide",
-                Location = new Point(138, 82),
+                Location = new Point(138, 144),
                 Size = new Size(80, 30)
             };
             hideButton.Click += (sender, args) => Hide();
@@ -76,8 +96,8 @@ namespace SpecialRename
 
             statusLabel = new Label
             {
-                Text = "Enter a target name, click Start hotkey, then select one item in File Explorer and press Ctrl+F1.",
-                Location = new Point(18, 126),
+                Text = "Enter target names, click Start hotkey, then select one item in File Explorer and press Ctrl+F1 or Ctrl+F2.",
+                Location = new Point(18, 188),
                 Size = new Size(380, 38)
             };
             Controls.Add(statusLabel);
@@ -95,7 +115,7 @@ namespace SpecialRename
                 Activate();
             };
 
-            Shown += (sender, args) => nameBox.Focus();
+            Shown += (sender, args) => firstNameBox.Focus();
             FormClosing += (sender, args) =>
             {
                 StopHotkey();
@@ -105,52 +125,80 @@ namespace SpecialRename
 
         private void StartHotkey()
         {
-            var name = nameBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                MessageBox.Show("Choose a target name first.", "Special Rename");
-                return;
-            }
+            var firstName = firstNameBox.Text.Trim();
+            var secondName = secondNameBox.Text.Trim();
 
-            if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            if (!ValidateTargetName(firstName, "first") || !ValidateTargetName(secondName, "second"))
             {
-                MessageBox.Show("The target name contains characters Windows cannot use in file names.", "Special Rename");
                 return;
             }
 
             StopHotkey();
-            targetName = name;
+            firstTargetName = firstName;
+            secondTargetName = secondName;
 
-            if (RegisterHotKey(Handle, HotkeyId, ModControl, VkF1))
+            if (RegisterHotKey(Handle, HotkeyIdFirst, ModControl, VkF1) &&
+                RegisterHotKey(Handle, HotkeyIdSecond, ModControl, VkF2))
             {
-                statusLabel.Text = "Active: select one item in File Explorer and press Ctrl+F1. Target name: " + name;
+                statusLabel.Text = "Active: Ctrl+F1 renames to '" + firstName + "'; Ctrl+F2 renames to '" + secondName + "'.";
                 Hide();
                 return;
             }
 
-            MessageBox.Show("Ctrl+F1 is already in use by another app.", "Special Rename");
+            StopHotkey();
+            MessageBox.Show("Ctrl+F1 or Ctrl+F2 is already in use by another app.", "Special Rename");
+        }
+
+        private static bool ValidateTargetName(string name, string label)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                MessageBox.Show("Choose a " + label + " target name first.", "Special Rename");
+                return false;
+            }
+
+            if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            {
+                MessageBox.Show("The " + label + " target name contains characters Windows cannot use in file names.", "Special Rename");
+                return false;
+            }
+
+            return true;
         }
 
         private void StopHotkey()
         {
             if (IsHandleCreated)
             {
-                UnregisterHotKey(Handle, HotkeyId);
+                UnregisterHotKey(Handle, HotkeyIdFirst);
+                UnregisterHotKey(Handle, HotkeyIdSecond);
             }
         }
 
         protected override void WndProc(ref Message message)
         {
-            if (message.Msg == WmHotkey && message.WParam.ToInt32() == HotkeyId)
+            if (message.Msg == WmHotkey)
             {
-                RenameSelectedExplorerItem();
+                var hotkeyId = message.WParam.ToInt32();
+                if (hotkeyId == HotkeyIdFirst)
+                {
+                    RenameSelectedExplorerItem(firstTargetName);
+                    return;
+                }
+
+                if (hotkeyId == HotkeyIdSecond)
+                {
+                    RenameSelectedExplorerItem(secondTargetName);
+                    return;
+                }
+
                 return;
             }
 
             base.WndProc(ref message);
         }
 
-        private void RenameSelectedExplorerItem()
+        private void RenameSelectedExplorerItem(string targetName)
         {
             string selectedPath = null;
             string destination = null;
